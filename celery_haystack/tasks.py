@@ -1,15 +1,19 @@
+from celery.task import Task  # noqa
+from celery.utils.log import get_task_logger
+from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
-from django.apps import apps
-get_model = apps.get_model
+from django.utils.translation import override
+
+from haystack import connection_router, connections
+from haystack.exceptions import NotHandled as IndexNotFoundException
 
 from .conf import settings
 
-from haystack import connections, connection_router
-from haystack.exceptions import NotHandled as IndexNotFoundException
+get_model = apps.get_model
 
-from celery.task import Task  # noqa
-from celery.utils.log import get_task_logger
+
+
 
 logger = get_task_logger(__name__)
 
@@ -51,13 +55,14 @@ class CeleryHaystackSignalHandler(Task):
                                        object_path)
         return model_class
 
-    def get_instance(self, model_class, pk, **kwargs):
+    def get_instance(self, model_class, pk, current_index, using, **kwargs):
         """
         Fetch the instance in a standarized way.
         """
         instance = None
+        qs = current_index.index_queryset(using=using)
         try:
-            instance = model_class._default_manager.get(pk=pk)
+            instance = qs.get(pk=pk)
         except model_class.DoesNotExist:
             logger.error("Couldn't load %s.%s.%s. Somehow it went missing?" %
                          (model_class._meta.app_label.lower(),
@@ -111,7 +116,7 @@ class CeleryHaystackSignalHandler(Task):
                     logger.debug(msg)
             elif action == 'update':
                 # and the instance of the model class with the pk
-                instance = self.get_instance(model_class, pk, **kwargs)
+                instance = self.get_instance(model_class, pk, current_index, using, **kwargs)
                 if instance is None:
                     logger.debug("Failed updating '%s' (with %s)" %
                                  (identifier, current_index_name))
