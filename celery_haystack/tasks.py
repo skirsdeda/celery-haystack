@@ -75,11 +75,13 @@ class CeleryHaystackSignalHandler(Task):
         """
         Fetch the model's registered ``SearchIndex`` in a standarized way.
         """
+        # instead of asking router.for_write which aliases to use, we go
+        # through all aliases just like in update_index management command
         try:
-            using_backends = connection_router.for_write(**{'models': [model_class]})
-            for using in using_backends:
-                index_holder = connections[using].get_unified_index()
-                yield index_holder.get_index(model_class), using
+            conns = connections.connections_info.keys()
+            for using in conns:
+                uni_index = connections[using].get_unified_index()
+                yield uni_index.get_index(model_class), using
         except IndexNotFoundException:
             raise ImproperlyConfigured("Couldn't find a SearchIndex for %s." %
                                        model_class)
@@ -116,12 +118,14 @@ class CeleryHaystackSignalHandler(Task):
                     logger.debug(msg)
             elif action == 'update':
                 # and the instance of the model class with the pk
-                instance = self.get_instance(model_class, pk, current_index, using, **kwargs)
+                instance = self.get_instance(model_class, pk, current_index,
+                                             using, **kwargs)
                 if instance is None:
                     logger.debug("Failed updating '%s' (with %s)" %
                                  (identifier, current_index_name))
-                    # since a particular object might not exist on different aliases
-                    # (for example when using languages for aliases), it's OK if instance is None
+                    # since a particular object might not exist on different
+                    # aliases (for example when using languages for aliases),
+                    # it's OK if instance is None
                     continue
 
                 # Call the appropriate handler of the current index and
